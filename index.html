@@ -274,10 +274,40 @@
   }
 
   function safeText(x){ try { return String(x ?? ""); } catch { return ""; } }
+
+  // ✅ PARSER DE DINHEIRO (corrige 6.42 virar 642)
+  function parseMoney(v){
+    const raw = safeText(v).trim();
+    if (!raw) return NaN;
+
+    // mantém só números, separadores e sinal
+    let s = raw.replace(/\s+/g,"").replace(/[^\d.,-]/g,"");
+
+    // se tem vírgula e ponto: assume . milhares e , decimal
+    if (s.includes(",") && s.includes(".")){
+      s = s.replace(/\./g,"").replace(",",".");
+    } else if (s.includes(",")){
+      // só vírgula: vírgula decimal
+      s = s.replace(",",".");
+    } else if (s.includes(".")){
+      // só ponto: ponto decimal (não remover!)
+      // se tiver mais de um ponto, mantém o último como decimal e remove os anteriores
+      const parts = s.split(".");
+      if (parts.length > 2){
+        const last = parts.pop();
+        s = parts.join("") + "." + last;
+      }
+    }
+
+    const n = Number(s);
+    return Number.isFinite(n) ? n : NaN;
+  }
+
   function numOr(v, fallback){
-    const n = Number(String(v).replace(/\./g,"").replace(",",".")); // aceita 1.234,56
+    const n = parseMoney(v);
     return Number.isFinite(n) ? n : fallback;
   }
+
   function pad2(n){ return String(n).padStart(2,"0"); }
   function brl(v){
     const vv = Number(v || 0);
@@ -344,7 +374,6 @@
     return vals;
   }
   function stripInstallmentSuffix(desc){
-    // remove " (x/y)" do final, se existir
     const s = safeText(desc).trim();
     return s.replace(/\s*\(\s*\d+\s*\/\s*\d+\s*\)\s*$/,"").trim();
   }
@@ -381,7 +410,6 @@
         const card = normDesc(t.card || t.cartao || "");
         const desc = normDesc(t.desc || t.descricao || "");
 
-        // novos campos (parcelas sincronizadas)
         const installmentId = t.installmentId ? normDesc(t.installmentId) : "";
         const installmentIndex = Number.isFinite(Number(t.installmentIndex)) ? Number(t.installmentIndex) : null;
         const installmentTotal = Number.isFinite(Number(t.installmentTotal)) ? Number(t.installmentTotal) : null;
@@ -476,7 +504,6 @@
   }
   function groupMetaFromTx(tx){
     const group = getGroupByInstallmentId(tx.installmentId);
-    // start = menor installmentIndex existente (pode ser >1 se você lançou a partir de 2/10, por exemplo)
     const start = group.reduce((m, t) => {
       const idx = Number.isFinite(Number(t.installmentIndex)) ? Number(t.installmentIndex) : Infinity;
       return Math.min(m, idx);
@@ -494,7 +521,7 @@
     const baseDate = parse_ddmmyyyy(baseTx.date) || today();
     const purchaseTotal = Number.isFinite(Number(tx.installmentPurchaseTotal))
       ? Number(tx.installmentPurchaseTotal)
-      : group.reduce((acc,t)=>acc+Number(t.valor||0),0); // fallback
+      : group.reduce((acc,t)=>acc+Number(t.valor||0),0);
 
     return {
       group,
@@ -514,7 +541,6 @@
     if (!Number.isInteger(start) || start < 1 || start > tot) throw new Error("start inválido");
     if (!Number.isFinite(Number(purchaseTotal))) throw new Error("valor inválido");
 
-    // remove grupo antigo
     data.transactions = (data.transactions || []).filter(t => t.installmentId !== installmentId);
 
     const vals = splitInstallmentValues(Number(purchaseTotal), tot);
@@ -678,7 +704,7 @@
 
     const iDate = el("input", { value: fmt_ddmmyyyy(today()), placeholder:"dd/MM/aaaa" });
     const iDesc = el("input", { placeholder:"Descrição" });
-    const iVal  = el("input", { placeholder:"Valor total (ex: 1000,00)" });
+    const iVal  = el("input", { placeholder:"Valor total (ex: 6,42 ou 6.42)" });
     const iParc = el("input", { placeholder:"Parcelas opcional (ex: 1/10)" });
 
     const cats = ["Outros","Alimentação","Despesas Fixas"];
@@ -762,7 +788,6 @@
   }
 
   function popupEditTransaction(tx, goBackRoute=null, goBackPayload=null){
-    // Fixas continuam com o editor de fixas
     if (tx.cat === "Despesas Fixas") { popupEditFixed(tx); return; }
 
     const wrap = el("div");
@@ -770,7 +795,6 @@
 
     const isSynced = isSyncedInstallment(tx);
 
-    // Prefill
     let preDate = safeText(tx.date);
     let preDesc = safeText(tx.desc);
     let preCat  = normCategory(tx.cat);
@@ -793,8 +817,7 @@
 
     const iDate = el("input", { value: preDate, placeholder:"dd/MM/aaaa" });
     const iDesc = el("input", { value: preDesc, placeholder:"Descrição" });
-    const iVal  = el("input", { value: String(preTotal).replace(".", ","), placeholder:"Valor total (ex: 1000,00)" });
-
+    const iVal  = el("input", { value: String(preTotal).replace(".", ","), placeholder:"Valor total (ex: 6,42 ou 6.42)" });
     const iParc = el("input", { value: preParc, placeholder: isSynced ? "Parcelas (ex: 1/10)" : "Parcelas opcional (ex: 1/10)" });
 
     const cats = ["Outros","Alimentação","Despesas Fixas"];
@@ -812,7 +835,6 @@
 
     function syncCat(){
       if (sCat.value === "Despesas Fixas"){
-        // aqui, se virar fixa, cartão some
         sCard.style.display = "none";
       }else{
         sCard.style.display = "";
@@ -866,7 +888,6 @@
 
       const [idx, tot] = parseInstallments(iParc.value);
 
-      // Caso 1: já era parcelado sincronizado => sempre atualiza o grupo inteiro
       if (isSynced){
         const meta = groupMetaFromTx(tx);
         const newStart = (tot != null) ? idx : meta.start;
@@ -896,9 +917,7 @@
         return;
       }
 
-      // Caso 2: não era parcelado, mas usuário preencheu parcelas => cria parcelado sincronizado
       if (tot != null){
-        // remove este item e cria o grupo novo a partir dele
         const oldIdx = data.transactions.indexOf(tx);
         if (oldIdx >= 0) data.transactions.splice(oldIdx, 1);
 
@@ -930,14 +949,12 @@
         return;
       }
 
-      // Caso 3: gasto simples => edita só ele
       tx.date = fmt_ddmmyyyy(d);
       tx.desc = desc;
       tx.valor = Number(total);
       tx.cat = cat;
       tx.card = card;
 
-      // limpa qualquer lixo antigo
       delete tx.installmentId;
       delete tx.installmentIndex;
       delete tx.installmentTotal;
@@ -987,7 +1004,6 @@
     openModal("Nova receita", wrap, [bCancel, bSave]);
   }
 
-  // FIXAS: adicionar/editar com valor (sem pré-fixadas)
   function popupAddFixed(){
     const wrap = el("div");
     const form = el("div", { class:"form" });
@@ -1059,7 +1075,6 @@
       tx.cat = "Despesas Fixas";
       tx.card = NO_CARD;
 
-      // limpar qualquer vínculo de parcelas (se alguém importou algo estranho)
       delete tx.installmentId;
       delete tx.installmentIndex;
       delete tx.installmentTotal;
@@ -1080,7 +1095,7 @@
     const form = el("div", { class:"form" });
 
     const iName = el("input", { value: cardName, placeholder:"Nome do cartão" });
-    const iLimit = el("input", { value: String(numOr((data.cards||{})[cardName], 0)), placeholder:"Limite/meta do mês (ex: 400,00)" });
+    const iLimit = el("input", { value: String(numOr((data.cards||{})[cardName], 0)).replace(".", ","), placeholder:"Limite/meta do mês (ex: 400,00)" });
 
     form.appendChild(el("label", {}, ["Nome", iName]));
     form.appendChild(el("label", {}, ["Limite/meta do mês", iLimit]));
@@ -1167,7 +1182,6 @@
     else view.appendChild(renderDashboard());
   }
 
-  // DASHBOARD: só cartões + despesas x receitas (mês)
   function renderDashboard(){
     const p = el("div", { class:"panel" });
 
@@ -1312,7 +1326,6 @@
     return p;
   }
 
-  // FIXAS: só adicionar/editar valor (sem pré-fixadas)
   function renderFixas(){
     const p = el("div", { class:"panel" });
 
