@@ -402,6 +402,9 @@
 (() => {
   const STORAGE_KEY = "metacartao_data_v1";
 
+  // "Sem cartão" para despesas fixas (não entra em metas de cartões)
+  const NO_CARD = "Sem cartão";
+
   const DEFAULT_CARDS_LIMITS = {
     "Mercado Pago": 400,
     "Caixa": 400,
@@ -512,11 +515,12 @@
         const date = safeText(t.date || t.data || fmt_ddmmyyyy(today()));
         const valor = numOr(t.valor, 0);
         const cat = safeText(t.cat || t.categoria || "Outros");
-        const card = safeText(t.card || t.cartao || "Mercado Pago");
+        const card = safeText(t.card || t.cartao || "");
         const desc = safeText(t.desc || t.descricao || "");
         const paid = t.paid === true || t.pago === true;
 
-        if (!(card in d.cards)) d.cards[card] = 0;
+        // não força cartão em fixas; e não cria NO_CARD dentro dos cartões
+        if (cat !== "Despesas Fixas" && card && !(card in d.cards)) d.cards[card] = 0;
         if (!d.expense_categories.includes(cat)) d.expense_categories.push(cat);
 
         return { date, valor, cat, card, desc, paid };
@@ -611,6 +615,38 @@
     return vals;
   }
 
+  // Garante que o mês "comece no negativo": cria (se não existir) um lançamento PENDENTE
+  // para cada despesa fixa, sempre no dia 01 do mês, usando NO_CARD.
+  function ensureFixedDueForMonth(m, y){
+    const templates = Array.isArray(data.fixed_templates) ? data.fixed_templates : [];
+    if (!templates.length) return;
+
+    for (const it of templates){
+      const nm = safeText(it.name).trim();
+      const amt = numOr(it.amount, 0);
+
+      const exists = data.transactions.some(t => {
+        const d = parse_ddmmyyyy(t.date);
+        if (!d || !sameMonth(d, m, y)) return false;
+        if (t.cat !== "Despesas Fixas") return false;
+        const desc = safeText(t.desc).trim();
+        // considera match pelo começo do texto (pra aceitar "Água" e também "Água (ajuste)" etc.)
+        return desc.toLowerCase().startsWith(nm.toLowerCase());
+      });
+
+      if (!exists){
+        data.transactions.push({
+          date: `01/${pad2(m)}/${y}`,
+          valor: Number(amt),
+          cat: "Despesas Fixas",
+          card: NO_CARD,          // não entra em cartões
+          desc: nm,
+          paid: false
+        });
+      }
+    }
+  }
+
   function monthTotalExpenses(m, y){
     return data.transactions.reduce((acc, t) => {
       const d = parse_ddmmyyyy(t.date) || today();
@@ -636,8 +672,11 @@
     }, 0);
   }
 
+  // IMPORTANTE: cartão só soma compras "de cartão".
+  // Despesas Fixas (NO_CARD) NÃO contam em metas de cartões.
   function monthTotalForCard(card, m, y){
     return data.transactions.reduce((acc, t) => {
+      if (t.cat === "Despesas Fixas") return acc;
       if (t.card !== card) return acc;
       const d = parse_ddmmyyyy(t.date) || today();
       if (sameMonth(d, m, y)) acc += Number(t.valor || 0);
@@ -656,6 +695,7 @@
 
   function monthTransactionsForCard(card, m, y){
     const txs = data.transactions.filter(t => {
+      if (t.cat === "Despesas Fixas") return false;
       if (t.card !== card) return false;
       const d = parse_ddmmyyyy(t.date) || today();
       return sameMonth(d, m, y);
@@ -756,6 +796,10 @@
   function setMonth(m, y){
     state.m = m; state.y = y;
     monthLabel.textContent = monthYearStr(state.m, state.y);
+
+    // cria despesas fixas pendentes no mês (começa no negativo)
+    ensureFixedDueForMonth(state.m, state.y);
+
     render();
   }
 
@@ -783,6 +827,8 @@
       try{
         const obj = JSON.parse(String(reader.result || "{}"));
         data = normalizeData(obj);
+        // garante fixas do mês importado/atual também
+        ensureFixedDueForMonth(state.m, state.y);
         save();
         toast("Importado com sucesso.");
         render();
@@ -812,6 +858,7 @@
   document.getElementById("btnReset").addEventListener("click", () => {
     if (!confirm("Resetar todos os dados?")) return;
     data = normalizeData(seed());
+    ensureFixedDueForMonth(state.m, state.y);
     save();
     toast("Dados resetados.");
     render();
@@ -849,14 +896,31 @@
     }
     const sCard = select(cardNames, cardNames[0]);
 
+    // Se categoria for Despesas Fixas, forçar "Sem cartão"
+    const cardLabel = el("div", { class:"muted", style:"font-size:12px; font-weight:800; margin-top:6px; display:none;" }, [
+      "Despesas Fixas usam: ", NO_CARD
+    ]);
+
+    function syncCat(){
+      if (sCat.value === "Despesas Fixas"){
+        sCard.style.display = "none";
+        cardLabel.style.display = "block";
+      }else{
+        sCard.style.display = "";
+        cardLabel.style.display = "none";
+      }
+    }
+    sCat.addEventListener("change", syncCat);
+
     form.appendChild(el("label", {}, ["Data", iDate]));
     form.appendChild(el("label", {}, ["Descrição", iDesc]));
     form.appendChild(el("label", {}, ["Valor total", iVal]));
     form.appendChild(el("label", {}, ["Parcelas (opcional)", iParc]));
     form.appendChild(el("label", {}, ["Categoria", sCat]));
-    form.appendChild(el("label", {}, ["Cartão", sCard]));
+    form.appendChild(el("label", {}, ["Cartão", sCard, cardLabel]));
 
     wrap.appendChild(form);
+    syncCat();
 
     const bCancel = btnSmall("Cancelar", "btnGhost", () => closeModal());
     const bSave = btnSmall("Salvar", "btnGreen", () => {
@@ -864,7 +928,7 @@
       const total = numOr(iVal.value, NaN);
       const desc = String(iDesc.value || "").trim();
       const cat = sCat.value;
-      const card = sCard.value;
+      const card = (cat === "Despesas Fixas") ? NO_CARD : sCard.value;
 
       if (!Number.isFinite(total) || !desc){
         toast("Preencha valor e descrição.");
@@ -900,7 +964,7 @@
 
       save();
       closeModal();
-      go(goBack);
+      go(goBack === "card_detail" ? "card_detail" : goBack);
       toast("Gasto salvo.");
     });
 
@@ -948,8 +1012,114 @@
     openModal("Nova receita", wrap, [bCancel, bSave]);
   }
 
+  function popupEditFixedTemplate(index){
+    const it = (data.fixed_templates || [])[index];
+    if (!it) return;
+
+    const wrap = el("div");
+    const form = el("div", { class:"form" });
+
+    const iName = el("input", { value: safeText(it.name), placeholder:"Nome (ex: Luz)" });
+    const iVal  = el("input", { value: String(it.amount ?? ""), placeholder:"Valor (ex: 450,00)" });
+
+    form.appendChild(el("label", {}, ["Nome", iName]));
+    form.appendChild(el("label", {}, ["Valor", iVal]));
+    wrap.appendChild(form);
+
+    const bCancel = btnSmall("Cancelar", "btnGhost", () => closeModal());
+    const bDelete = btnSmall("Excluir", "btnRed", () => {
+      if (!confirm("Excluir esta despesa fixa?")) return;
+
+      const oldName = safeText(it.name).trim().toLowerCase();
+
+      data.fixed_templates.splice(index, 1);
+
+      // remove lançamentos do mês atual relacionados a essa fixa (pra não ficar “fantasma”)
+      data.transactions = data.transactions.filter(t => {
+        const d = parse_ddmmyyyy(t.date);
+        if (!d || !sameMonth(d, state.m, state.y)) return true;
+        if (t.cat !== "Despesas Fixas") return true;
+        const desc = safeText(t.desc).trim().toLowerCase();
+        return !desc.startsWith(oldName);
+      });
+
+      save();
+      closeModal();
+      toast("Despesa fixa excluída.");
+      render();
+    });
+
+    const bSave = btnSmall("Salvar", "btnGreen", () => {
+      const newName = safeText(iName.value).trim();
+      const newVal = numOr(iVal.value, NaN);
+      if (!newName || !Number.isFinite(newVal)){
+        toast("Preencha nome e valor.");
+        return;
+      }
+
+      const oldName = safeText(it.name).trim().toLowerCase();
+
+      it.name = newName;
+      it.amount = Number(newVal);
+
+      // Atualiza o lançamento do mês atual (se existir) para refletir o reajuste
+      const tx = findFixedTxForMonth(oldName);
+      if (tx){
+        tx.desc = newName;
+        tx.valor = Number(newVal);
+        tx.card = NO_CARD;
+        tx.cat = "Despesas Fixas";
+      }else{
+        // se não existir por algum motivo, garante de novo
+        ensureFixedDueForMonth(state.m, state.y);
+      }
+
+      save();
+      closeModal();
+      toast("Despesa fixa atualizada.");
+      render();
+    });
+
+    openModal("Editar despesa fixa", wrap, [bCancel, bDelete, bSave]);
+  }
+
+  function popupAddFixedTemplate(){
+    const wrap = el("div");
+    const form = el("div", { class:"form" });
+
+    const iName = el("input", { placeholder:"Nome (ex: Condomínio)" });
+    const iVal  = el("input", { placeholder:"Valor (ex: 250,00)" });
+
+    form.appendChild(el("label", {}, ["Nome", iName]));
+    form.appendChild(el("label", {}, ["Valor", iVal]));
+    wrap.appendChild(form);
+
+    const bCancel = btnSmall("Cancelar", "btnGhost", () => closeModal());
+    const bSave = btnSmall("Adicionar", "btnGreen", () => {
+      const nm = safeText(iName.value).trim();
+      const v = numOr(iVal.value, NaN);
+      if (!nm || !Number.isFinite(v)){
+        toast("Preencha nome e valor.");
+        return;
+      }
+      data.fixed_templates.push({ name: nm, amount: Number(v) });
+      // garante lançamento pendente do mês atual já
+      ensureFixedDueForMonth(state.m, state.y);
+
+      save();
+      closeModal();
+      toast("Despesa fixa adicionada.");
+      render();
+    });
+
+    openModal("Nova despesa fixa", wrap, [bCancel, bSave]);
+  }
+
   // Views
   function render(){
+    // garante fixas pendentes sempre antes de calcular (se mexeu em templates/importou etc.)
+    ensureFixedDueForMonth(state.m, state.y);
+
     save();
     monthLabel.textContent = monthYearStr(state.m, state.y);
     view.innerHTML = "";
@@ -966,7 +1136,7 @@
   function renderDashboard(){
     const root = el("div", { class:"grid" });
 
-    // Left: metas por categoria + resumo
+    // Left
     const p1 = el("div", { class:"panel" });
     p1.appendChild(
       el("div", { class:"panelHeader" }, [
@@ -1041,13 +1211,13 @@
     body.appendChild(list);
     p1.appendChild(body);
 
-    // Right: metas por cartão
+    // Right
     const p2 = el("div", { class:"panel" });
     p2.appendChild(
       el("div", { class:"panelHeader" }, [
         el("div", {}, [
           el("div", { class:"panelTitle" }, ["💳 Metas por cartão"]),
-          el("div", { class:"panelSub" }, ["Toque para ver detalhes"])
+          el("div", { class:"panelSub" }, ["Toque para ver detalhes (fixas não entram aqui)"])
         ])
       ])
     );
@@ -1117,11 +1287,12 @@
     txs.forEach((t) => {
       const paid = t.paid === true;
       const paidTxt = paid ? "✅ Pago" : "⬜️ Pagar";
+      const cardShow = (t.cat === "Despesas Fixas" || t.card === NO_CARD || !t.card) ? "—" : t.card;
 
       const item = el("div", { class:"item" });
       item.appendChild(el("div", { class:"itemTop" }, [
         el("div", {}, [
-          el("p", { class:"itemTitle mono" }, [`${t.date} • ${t.cat} • ${t.card} • ${brl(t.valor)}`]),
+          el("p", { class:"itemTitle mono" }, [`${t.date} • ${t.cat} • ${cardShow} • ${brl(t.valor)}`]),
           el("div", { class:"itemMeta" }, [t.desc || ""])
         ]),
         el("span", { class:"chip" }, [paidTxt])
@@ -1161,8 +1332,11 @@
       el("div", { class:"panelHeader" }, [
         el("div", {}, [
           el("div", { class:"panelTitle" }, ["🧩 Fixas • ", monthYearStr(state.m, state.y)]),
-          el("div", { class:"panelSub" }, ["Marcar pago gera/atualiza gasto do mês"])
+          el("div", { class:"panelSub" }, ["Editável + já lança pendente no mês (Sem cartão)"])
         ]),
+        el("div", { class:"row" }, [
+          btnSmall("+ Nova fixa", "btnGreen", () => popupAddFixedTemplate())
+        ])
       ])
     );
 
@@ -1177,7 +1351,7 @@
 
     const list = el("div", { class:"list" });
 
-    templates.forEach((it) => {
+    templates.forEach((it, idx) => {
       const nm = safeText(it.name).trim();
       const amt = numOr(it.amount, 0);
       const tx = findFixedTxForMonth(nm);
@@ -1187,31 +1361,42 @@
       item.appendChild(el("div", { class:"itemTop" }, [
         el("div", {}, [
           el("p", { class:"itemTitle" }, [`${nm} • ${brl(amt)}`]),
-          el("div", { class:"itemMeta" }, [paid ? "✅ Pago (mês)" : "⬜️ Não pago (mês)"])
+          el("div", { class:"itemMeta" }, [
+            paid ? "✅ Pago (mês)" : "⬜️ Pendente (mês)",
+            " • ",
+            "Cartão: ",
+            NO_CARD
+          ])
         ]),
         el("span", { class:"chip" }, [paid ? "Pago" : "Pendente"])
       ]));
 
       const actions = el("div", { class:"row", style:"margin-top:10px;" });
+
       actions.appendChild(
         btnSmall(paid ? "Marcar NÃO pago" : "Marcar PAGO", paid ? "btnRed" : "btnGreen", () => {
           const existing = findFixedTxForMonth(nm);
           if (!existing){
-            data.transactions.push({
-              date: fmt_ddmmyyyy(today()),
-              valor: Number(amt),
-              cat: "Despesas Fixas",
-              card: "Mercado Pago",
-              desc: nm,
-              paid: true
-            });
-          }else{
-            existing.paid = !(existing.paid === true);
+            // garante lançamento pendente e marca pago
+            ensureFixedDueForMonth(state.m, state.y);
+          }
+          const ex2 = findFixedTxForMonth(nm);
+          if (ex2){
+            ex2.paid = !(ex2.paid === true);
+            ex2.cat = "Despesas Fixas";
+            ex2.card = NO_CARD;
+            ex2.desc = nm;
+            ex2.valor = Number(amt);
           }
           save();
           render();
         })
       );
+
+      actions.appendChild(
+        btnSmall("Editar", "btnGhost", () => popupEditFixedTemplate(idx))
+      );
+
       actions.appendChild(
         btnSmall("Ver em Gastos", "btnGhost", () => go("gastos"))
       );
@@ -1255,7 +1440,7 @@
       el("div", { class:"kpiCard" }, [
         el("div", { class:"label" }, ["Dica"]),
         el("div", { class:"value", style:"font-size:14px; font-weight:900; line-height:1.25; margin-top:6px;" }, [
-          "Exportar/Importar no topo"
+          "Despesas Fixas já entram no mês (negativo) automaticamente"
         ])
       ]),
     ]));
@@ -1305,7 +1490,7 @@
       el("div", { class:"panelHeader" }, [
         el("div", {}, [
           el("div", { class:"panelTitle" }, ["💳 Cartões • ", monthYearStr(state.m, state.y)]),
-          el("div", { class:"panelSub" }, ["Toque para abrir detalhes"])
+          el("div", { class:"panelSub" }, ["Toque para abrir detalhes (fixas não aparecem aqui)"])
         ]),
       ])
     );
@@ -1344,7 +1529,7 @@
           btnSmall("← Voltar", "btnGhost", () => go("dashboard")),
           el("div", {}, [
             el("div", { class:"panelTitle" }, [`${cardName} • ${monthYearStr(state.m, state.y)}`]),
-            el("div", { class:"panelSub" }, ["Compras do mês neste cartão"])
+            el("div", { class:"panelSub" }, ["Compras do mês neste cartão (fixas não entram)"])
           ])
         ]),
         btnSmall("+ Gasto", "btnGreen", () => popupAddTransaction("card_detail"))
@@ -1405,6 +1590,7 @@
   }
 
   // Initial
+  ensureFixedDueForMonth(state.m, state.y);
   setMonth(state.m, state.y);
   go("dashboard");
 
