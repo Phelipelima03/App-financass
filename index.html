@@ -89,6 +89,7 @@
       padding: 14px 14px 12px;
       border-bottom: 1px solid var(--line);
       display:flex; align-items:center; justify-content:space-between; gap:10px;
+      flex-wrap:wrap;
     }
     .panelTitle{ font-size: 15px; font-weight: 900; letter-spacing:.2px; margin:0; }
     .panelSub{ margin:2px 0 0; color: var(--muted); font-size: 12px; }
@@ -129,27 +130,6 @@
     .itemTop{ display:flex; gap:10px; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; }
     .itemTitle{ font-weight: 950; font-size: 14px; margin:0; }
     .itemMeta{ margin:4px 0 0; color: var(--muted); font-size: 12px; line-height:1.35; }
-    .chip{
-      display:inline-flex; align-items:center; gap:6px;
-      padding: 6px 10px; border-radius: 999px;
-      background: var(--chip);
-      border: 1px solid var(--line);
-      color: var(--text);
-      font-size: 12px; font-weight: 900; white-space:nowrap;
-    }
-    .progressWrap{
-      margin-top:10px;
-      background: rgba(255,255,255,.06);
-      border:1px solid var(--line);
-      border-radius: 999px;
-      overflow:hidden;
-      height: 12px;
-    }
-    .progressBar{
-      height: 100%;
-      width: 0%;
-      background: linear-gradient(90deg, rgba(91,192,255,1), rgba(53,208,127,1));
-    }
     .muted{ color: var(--muted); }
     .divider{ height:1px; background: var(--line); margin: 12px 0; }
     .mono{ font-variant-numeric: tabular-nums; }
@@ -216,7 +196,7 @@
       font-size: 13px;
     }
 
-    /* Chart */
+    /* Chart (mês selecionado) */
     .chartWrap{
       margin-top: 10px;
       background: rgba(255,255,255,.04);
@@ -224,23 +204,20 @@
       border-radius: 16px;
       padding: 10px;
     }
-    canvas{ width:100%; height:180px; display:block; }
-    .switchRow{
-      display:flex; align-items:center; justify-content:space-between; gap:10px;
-      margin-top: 8px; flex-wrap:wrap;
-    }
-    .switch{
-      display:flex; gap:8px; align-items:center;
-      padding: 8px 10px;
-      border-radius: 999px;
-      background: rgba(255,255,255,.04);
-      border:1px solid var(--line);
+    canvas{ width:100%; height:200px; display:block; }
+    .chartLegend{
+      display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+      margin-top: 8px;
+      color: var(--muted);
       font-size: 12px;
       font-weight: 900;
-      color: var(--text);
-      user-select:none;
     }
-    .switch input{ width:16px; height:16px; margin:0; }
+    .dot{
+      width:10px; height:10px; border-radius:999px; display:inline-block;
+      background: rgba(255,255,255,.7);
+      border:1px solid rgba(255,255,255,.18);
+    }
+    .dot2{ background: rgba(255,255,255,.35); }
   </style>
 </head>
 
@@ -312,23 +289,20 @@
     "Salário 1","Salário 2","Hora besta","Vale terno","Rafa","Setis","Velinha","Velinho","Tia Mali","Renda extra"
   ];
 
+  // FIXAS: agora somente descrição (sem valor fixo)
   const DEFAULT_FIXED_TEMPLATES = [
-    ["Água", 380.00],
-    ["Luz", 450.00],
-    ["Internet", 33.33],
-    ["Gás", 120.00],
-    ["Aluguel", 280.00],
-    ["Celular Pi", 50.00],
-    ["Celular Mari", 75.00],
-    ["Rafael", 190.00],
-    ["Ajuda Velhinhos", 410.00],
-    ["Empréstimo MP", 404.62],
-    ["Velhinho consignado", 222.00],
-    ["Passagem", 242.00],
-    ["Cartão Mercado Pago", 400.00],
-    ["Cartão Caixa", 400.00],
-    ["Cartão Magazine Luiza", 400.00],
-    ["Cartão BrB", 400.00],
+    "Água",
+    "Luz",
+    "Internet",
+    "Gás",
+    "Aluguel",
+    "Celular Pi",
+    "Celular Mari",
+    "Rafael",
+    "Ajuda Velhinhos",
+    "Empréstimo MP",
+    "Velhinho consignado",
+    "Passagem"
   ];
 
   function seed(){
@@ -336,7 +310,7 @@
       categories: { META: { "Alimentação": 900.0 } },
       expense_categories: ["Alimentação","Despesas Fixas","Outros"],
       cards: { ...DEFAULT_CARDS_LIMITS },
-      fixed_templates: DEFAULT_FIXED_TEMPLATES.map(([name, amount]) => ({ name, amount })),
+      fixed_templates: DEFAULT_FIXED_TEMPLATES.map(name => ({ name })), // sem amount
       incomes: [],
       income_sources: [...DEFAULT_INCOME_SOURCES],
       transactions: [],
@@ -389,11 +363,9 @@
   function normCategory(cat){
     const c = safeText(cat).trim();
     const low = c.toLowerCase();
-
     if (low === "despesas fixas" || low === "despesa fixa" || low === "fixas") return "Despesas Fixas";
     if (low === "alimentacao" || low === "alimentação") return "Alimentação";
     if (low === "outros" || low === "outro") return "Outros";
-
     return c || "Outros";
   }
   function normDesc(s){ return safeText(s).trim().replace(/\s+/g, " "); }
@@ -430,7 +402,6 @@
     d.categories.META["Alimentação"] = numOr(d.categories.META["Alimentação"], 900.0);
 
     if (!Array.isArray(d.expense_categories)) d.expense_categories = ["Alimentação","Despesas Fixas","Outros"];
-
     d.expense_categories = d.expense_categories.map(normCategory);
     for (const base of ["Alimentação","Despesas Fixas","Outros"]){
       if (!d.expense_categories.includes(base)) d.expense_categories.push(base);
@@ -450,14 +421,14 @@
       d.cards[k] = numOr(d.cards[k], v);
     }
 
-    if (!Array.isArray(d.fixed_templates)) d.fixed_templates = DEFAULT_FIXED_TEMPLATES.map(([name, amount]) => ({ name, amount }));
+    // FIXAS: agora só {name}
+    if (!Array.isArray(d.fixed_templates)) d.fixed_templates = DEFAULT_FIXED_TEMPLATES.map(name => ({ name }));
     d.fixed_templates = d.fixed_templates
       .map(it => {
         if (!it || typeof it !== "object") return null;
         const name = normDesc(it.name);
         if (!name) return null;
-        const amount = numOr(it.amount, 0);
-        return { name, amount };
+        return { name };
       })
       .filter(Boolean);
 
@@ -540,6 +511,7 @@
       return acc;
     }, 0);
   }
+  // fixas NÃO entram em cartões
   function monthTotalForCard(card, m, y){
     return data.transactions.reduce((acc, t) => {
       if (t.cat === "Despesas Fixas") return acc;
@@ -572,21 +544,33 @@
     return txs;
   }
 
-  // ====== Fixas: NÃO DUPLICAR (usa fixed_template como chave) ======
+  function findFixedTxForMonth(fixedName){
+    const name = normDesc(fixedName);
+    for (const t of data.transactions){
+      const d = parse_ddmmyyyy(t.date);
+      if (!d) continue;
+      if (!sameMonth(d, state.m, state.y)) continue;
+      if (t.cat !== "Despesas Fixas") continue;
+
+      if (t.fixed_template && startsWithNorm(t.fixed_template, name)) return t;
+      if (startsWithNorm(t.desc, name)) return t;
+    }
+    return null;
+  }
+
+  // ====== Fixas: NÃO DUPLICAR (fixed_template como chave) ======
   function ensureFixedDueForMonth(m, y){
     const templates = Array.isArray(data.fixed_templates) ? data.fixed_templates : [];
     if (!templates.length) return;
 
     for (const it of templates){
       const nm = normDesc(it.name);
-      const amt = numOr(it.amount, 0);
 
       const exists = data.transactions.some(t => {
         const d = parse_ddmmyyyy(t.date);
         if (!d) return false;
         if (!sameMonth(d, m, y)) return false;
         if (t.cat !== "Despesas Fixas") return false;
-
         if (t.fixed_template && startsWithNorm(t.fixed_template, nm)) return true;
         return startsWithNorm(t.desc, nm);
       });
@@ -594,7 +578,7 @@
       if (!exists){
         data.transactions.push({
           date: `01/${pad2(m)}/${y}`,
-          valor: Number(amt),
+          valor: 0,                 // valor manual por mês
           cat: "Despesas Fixas",
           card: NO_CARD,
           desc: nm,
@@ -619,11 +603,21 @@
     data.month_plans[key].income_expected = Number(v || 0);
     save();
   }
-  function monthExpectedExpenses(){
-    const fixed = (data.fixed_templates || []).reduce((acc, it) => acc + numOr(it.amount, 0), 0);
+
+  // Despesas previstas = metas (categorias) + fixas do mês (valores manuais)
+  function monthExpectedExpenses(m, y){
     const meta = (data.categories && data.categories.META) ? data.categories.META : {};
     const metas = Object.values(meta).reduce((acc, v) => acc + numOr(v, 0), 0);
-    return fixed + metas;
+
+    const fixasMes = data.transactions.reduce((acc, t) => {
+      const d = parse_ddmmyyyy(t.date);
+      if (!d) return acc;
+      if (!sameMonth(d, m, y)) return acc;
+      if (t.cat !== "Despesas Fixas") return acc;
+      return acc + numOr(t.valor, 0);
+    }, 0);
+
+    return metas + fixasMes;
   }
 
   // ====== UI helpers ======
@@ -683,7 +677,7 @@
   // ====== App state ======
   let data = load();
   const now = today();
-  const state = { m: now.getMonth()+1, y: now.getFullYear(), route: "dashboard", cardDetail: null, showPlannedOnChart: true };
+  const state = { m: now.getMonth()+1, y: now.getFullYear(), route: "dashboard", cardDetail: null };
 
   function setMonth(m, y){
     state.m = m; state.y = y;
@@ -763,7 +757,7 @@
   document.getElementById("tabReceitas").addEventListener("click", () => go("receitas"));
   document.getElementById("tabCartoes").addEventListener("click", () => go("cartoes"));
 
-  // ====== Popups (iguais) ======
+  // ====== Popups ======
   function popupAddTransaction(goBack="dashboard", prefillCard=null){
     const wrap = el("div");
     const form = el("div", { class:"form" });
@@ -885,40 +879,92 @@
     openModal("Nova receita", wrap, [bCancel, bSave]);
   }
 
-  function popupEditPlan(){
+  // FIXAS: editar somente descrição
+  function popupEditFixedTemplate(index){
+    const it = (data.fixed_templates || [])[index];
+    if (!it) return;
+
     const wrap = el("div");
     const form = el("div", { class:"form" });
 
-    const key = monthYearStr(state.m, state.y);
-    const cur = monthExpectedIncome(state.m, state.y);
-    const iIncomeExp = el("input", { value: String(cur || ""), placeholder:"Receitas previstas do mês (ex: 3500,00)" });
-    const expExpenses = monthExpectedExpenses();
+    const iName = el("input", { value: normDesc(it.name), placeholder:"Descrição (ex: Luz)" });
 
-    const hint = el("div", { class:"item", style:"grid-column:1/-1;" }, [
-      el("div", { class:"itemTitle" }, ["Como o Previsto funciona"]),
-      el("div", { class:"itemMeta" }, [
-        "• Despesas previstas = Fixas (lista) + Metas (categorias).", el("br"),
-        "• Receitas previstas = valor que você define aqui.", el("br"),
-        "• Cartões: limite/meta do cartão é o previsto do cartão."
-      ])
-    ]);
-
-    form.appendChild(el("label", {}, ["Receitas previstas", iIncomeExp]));
-    form.appendChild(el("label", {}, ["Despesas previstas (auto)", el("input", { value: brl(expExpenses), disabled:"true" })]));
-    form.appendChild(hint);
+    form.appendChild(el("label", {}, ["Descrição", iName]));
     wrap.appendChild(form);
 
     const bCancel = btnSmall("Cancelar", "btnGhost", () => closeModal());
-    const bSave = btnSmall("Salvar", "btnGreen", () => {
-      const v = numOr(iIncomeExp.value, NaN);
-      if (!Number.isFinite(v)){ toast("Preencha as receitas previstas."); return; }
-      setMonthExpectedIncome(state.m, state.y, v);
+
+    const bDelete = btnSmall("Excluir", "btnRed", () => {
+      if (!confirm("Excluir esta despesa fixa (modelo)?")) return;
+      const oldName = normDesc(it.name);
+
+      data.fixed_templates.splice(index, 1);
+
+      // remove lançamentos do mês atual dessa fixa
+      data.transactions = data.transactions.filter(t => {
+        const d = parse_ddmmyyyy(t.date);
+        if (!d) return true;
+        if (!sameMonth(d, state.m, state.y)) return true;
+        if (t.cat !== "Despesas Fixas") return true;
+        if (t.fixed_template && startsWithNorm(t.fixed_template, oldName)) return false;
+        return !startsWithNorm(t.desc, oldName);
+      });
+
+      save();
       closeModal();
-      toast("Planejamento salvo.");
+      toast("Modelo de fixa excluído.");
       render();
     });
 
-    openModal(`Planejamento • ${key}`, wrap, [bCancel, bSave]);
+    const bSave = btnSmall("Salvar", "btnGreen", () => {
+      const newName = normDesc(iName.value);
+      if (!newName){ toast("Preencha a descrição."); return; }
+
+      const oldName = normDesc(it.name);
+      it.name = newName;
+
+      const tx = findFixedTxForMonth(oldName);
+      if (tx){
+        tx.desc = newName;
+        tx.card = NO_CARD;
+        tx.cat = "Despesas Fixas";
+        tx.fixed_template = newName; // atualiza chave
+      }else{
+        ensureFixedDueForMonth(state.m, state.y);
+      }
+
+      save();
+      closeModal();
+      toast("Modelo de fixa atualizado.");
+      render();
+    });
+
+    openModal("Editar despesa fixa (modelo)", wrap, [bCancel, bDelete, bSave]);
+  }
+
+  function popupAddFixedTemplate(){
+    const wrap = el("div");
+    const form = el("div", { class:"form" });
+
+    const iName = el("input", { placeholder:"Descrição (ex: Condomínio)" });
+
+    form.appendChild(el("label", {}, ["Descrição", iName]));
+    wrap.appendChild(form);
+
+    const bCancel = btnSmall("Cancelar", "btnGhost", () => closeModal());
+    const bSave = btnSmall("Adicionar", "btnGreen", () => {
+      const nm = normDesc(iName.value);
+      if (!nm){ toast("Preencha a descrição."); return; }
+
+      data.fixed_templates.push({ name: nm });
+      ensureFixedDueForMonth(state.m, state.y);
+      save();
+      closeModal();
+      toast("Modelo de fixa adicionado.");
+      render();
+    });
+
+    openModal("Nova despesa fixa (modelo)", wrap, [bCancel, bSave]);
   }
 
   function popupEditCard(cardName){
@@ -1002,26 +1048,42 @@
     openModal("Novo cartão", wrap, [bCancel, bSave]);
   }
 
-  // ====== Gráfico: SOMENTE do mês selecionado (remove linha/escala de 6 meses) ======
-  function buildSeriesForSelectedMonth(){
-    const m = state.m, y = state.y;
+  function popupEditPlan(){
+    const wrap = el("div");
+    const form = el("div", { class:"form" });
 
-    const incR = monthTotalIncomes(m,y);
-    const expR = monthTotalExpenses(m,y);
-    const saldoR = incR - expR;
+    const key = monthYearStr(state.m, state.y);
+    const cur = monthExpectedIncome(state.m, state.y);
+    const iIncomeExp = el("input", { value: String(cur || ""), placeholder:"Receitas previstas do mês (ex: 3500,00)" });
 
-    const incP = monthExpectedIncome(m,y);
-    const expP = monthExpectedExpenses();
-    const saldoP = incP - expP;
+    const hint = el("div", { class:"item", style:"grid-column:1/-1;" }, [
+      el("div", { class:"itemTitle" }, ["Como o Previsto funciona"]),
+      el("div", { class:"itemMeta" }, [
+        "• Receitas previstas = valor que você define aqui.", el("br"),
+        "• Despesas previstas = Metas (categorias) + Fixas do mês (valores que você define nas Fixas).", el("br"),
+        "• Cartões: limite/meta do cartão é o previsto do cartão."
+      ])
+    ]);
 
-    return [{
-      label: `${pad2(m)}/${String(y).slice(-2)}`,
-      incomesR: incR, expensesR: expR, saldoR,
-      incomesP: incP, expensesP: expP, saldoP
-    }];
+    form.appendChild(el("label", {}, ["Receitas previstas", iIncomeExp]));
+    form.appendChild(hint);
+    wrap.appendChild(form);
+
+    const bCancel = btnSmall("Cancelar", "btnGhost", () => closeModal());
+    const bSave = btnSmall("Salvar", "btnGreen", () => {
+      const v = numOr(iIncomeExp.value, NaN);
+      if (!Number.isFinite(v)){ toast("Preencha as receitas previstas."); return; }
+      setMonthExpectedIncome(state.m, state.y, v);
+      closeModal();
+      toast("Planejamento salvo.");
+      render();
+    });
+
+    openModal(`Planejamento • ${key}`, wrap, [bCancel, bSave]);
   }
 
-  function drawMonthlyChart(canvas, point, showPlanned){
+  // ====== Chart (somente mês selecionado) ======
+  function drawMonthChart(canvas, real, planned){
     const ctx = canvas.getContext("2d");
     const dpr = (window.devicePixelRatio || 1);
     const w = canvas.width = Math.floor(canvas.clientWidth * dpr);
@@ -1030,9 +1092,9 @@
 
     const pad = 16 * dpr;
     const x0 = pad, y0 = pad + 10*dpr;
-    const x1 = w - pad, y1 = h - pad - 10*dpr;
+    const x1 = w - pad, y1 = h - pad - 14*dpr;
 
-    // base line
+    // baseline
     ctx.lineWidth = 1*dpr;
     ctx.strokeStyle = "rgba(255,255,255,.10)";
     ctx.beginPath();
@@ -1040,64 +1102,66 @@
     ctx.lineTo(x1, y1);
     ctx.stroke();
 
-    const maxAbs = Math.max(
-      1,
-      point.incomesR, point.expensesR, Math.abs(point.saldoR),
-      showPlanned ? Math.max(point.incomesP, point.expensesP, Math.abs(point.saldoP)) : 1
-    );
+    const labels = ["Receitas","Despesas","Saldo"];
+    const realVals = [real.incomes, real.expenses, real.saldo];
+    const planVals = [planned.incomes, planned.expenses, planned.saldo];
+
+    const maxAbs = Math.max(1, ...realVals.map(v => Math.abs(v)), ...planVals.map(v => Math.abs(v)));
 
     function yFromVal(v){
-      const t = v / maxAbs;
-      return y1 - (y1 - y0) * t;
+      const t = (v / maxAbs); // -1..1
+      const mid = (y0 + y1) / 2;
+      const half = (y1 - y0) / 2;
+      return mid - (half * t);
     }
 
-    const cx = (x0 + x1) / 2;
-    const barW = Math.max(18*dpr, Math.min(34*dpr, (x1-x0)*0.06));
+    // midline (zero)
+    const midY = yFromVal(0);
+    ctx.strokeStyle = "rgba(255,255,255,.12)";
+    ctx.beginPath();
+    ctx.moveTo(x0, midY);
+    ctx.lineTo(x1, midY);
+    ctx.stroke();
 
-    const cA = "rgba(255,255,255,.55)"; // receitas realizado
-    const cB = "rgba(255,255,255,.35)"; // despesas realizado
-    const cC = "rgba(255,255,255,.75)"; // saldo realizado
+    const n = labels.length;
+    const gap = (x1 - x0) / n;
+    const barW = gap * 0.22;
 
-    // Receitas (Realizado)
-    let yInc = yFromVal(point.incomesR);
-    ctx.fillStyle = cA;
-    ctx.fillRect(cx - barW*2.0, yInc, barW, y1 - yInc);
+    const cReal = "rgba(255,255,255,.75)";
+    const cPlan = "rgba(255,255,255,.35)";
 
-    // Despesas (Realizado)
-    let yExp = yFromVal(point.expensesR);
-    ctx.fillStyle = cB;
-    ctx.fillRect(cx - barW*0.5, yExp, barW, y1 - yExp);
+    for (let i=0;i<n;i++){
+      const cx = x0 + gap*(i+0.5);
 
-    // Saldo (Realizado)
-    const zeroY = yFromVal(0);
-    ctx.fillStyle = cC;
-    if (point.saldoR >= 0){
-      const yS = yFromVal(point.saldoR);
-      ctx.fillRect(cx + barW*1.0, yS, barW, zeroY - yS);
-    }else{
-      const down = (y1 - y0) * (Math.abs(point.saldoR) / maxAbs);
-      ctx.fillRect(cx + barW*1.0, zeroY, barW, down);
+      // planned
+      ctx.fillStyle = cPlan;
+      const yP = yFromVal(planVals[i]);
+      if (planVals[i] >= 0){
+        ctx.fillRect(cx - barW*1.2, yP, barW, midY - yP);
+      }else{
+        ctx.fillRect(cx - barW*1.2, midY, barW, yP - midY);
+      }
+
+      // real
+      ctx.fillStyle = cReal;
+      const yR = yFromVal(realVals[i]);
+      if (realVals[i] >= 0){
+        ctx.fillRect(cx + barW*0.2, yR, barW, midY - yR);
+      }else{
+        ctx.fillRect(cx + barW*0.2, midY, barW, yR - midY);
+      }
+
+      // label
+      ctx.fillStyle = "rgba(255,255,255,.55)";
+      ctx.font = `${12*dpr}px system-ui, -apple-system, Segoe UI, Roboto, Arial`;
+      ctx.textAlign = "center";
+      ctx.fillText(labels[i], cx, y1 + 14*dpr);
     }
 
-    // Previsto (linha tracejada) - agora só no mês selecionado
-    if (showPlanned){
-      ctx.strokeStyle = "rgba(255,255,255,.55)";
-      ctx.lineWidth = 2*dpr;
-      ctx.setLineDash([6*dpr, 6*dpr]);
-      ctx.beginPath();
-      const y = yFromVal(Math.max(0, point.saldoP));
-      ctx.moveTo(x0, y);
-      ctx.lineTo(x1, y);
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
-
-    // legend top
     ctx.fillStyle = "rgba(255,255,255,.65)";
     ctx.font = `${12*dpr}px system-ui, -apple-system, Segoe UI, Roboto, Arial`;
     ctx.textAlign = "left";
-    ctx.fillText(`Mês ${monthYearStr(state.m, state.y)} • Realizado: Receitas | Despesas | Saldo`, x0, y0 - 4*dpr);
-    if (showPlanned) ctx.fillText("Previsto: linha tracejada (Saldo)", x0, y0 + 14*dpr);
+    ctx.fillText("Previsto x Realizado (mês selecionado)", x0, y0 - 4*dpr);
   }
 
   // ====== Views ======
@@ -1118,15 +1182,21 @@
 
     window.removeEventListener("resize", window._mc_resize);
     window._mc_resize = () => {
-      const c = document.getElementById("monthlyChart");
+      const c = document.getElementById("monthChart");
       if (!c) return;
-      const pt = buildSeriesForSelectedMonth()[0];
-      drawMonthlyChart(c, pt, state.showPlannedOnChart);
+      const incR = monthTotalIncomes(state.m, state.y);
+      const expR = monthTotalExpenses(state.m, state.y);
+      const saldoR = incR - expR;
+
+      const incP = monthExpectedIncome(state.m, state.y);
+      const expP = monthExpectedExpenses(state.m, state.y);
+      const saldoP = incP - expP;
+
+      drawMonthChart(c, {incomes:incR, expenses:expR, saldo:saldoR}, {incomes:incP, expenses:expP, saldo:saldoP});
     };
     window.addEventListener("resize", window._mc_resize);
   }
 
-  // ====== Dashboard (somente mês selecionado + gráfico do mês) ======
   function renderDashboard(){
     const p = el("div", { class:"panel" });
 
@@ -1134,7 +1204,7 @@
       el("div", { class:"panelHeader" }, [
         el("div", {}, [
           el("div", { class:"panelTitle" }, ["📊 Dashboard • ", monthYearStr(state.m, state.y)]),
-          el("div", { class:"panelSub" }, ["Somente mês selecionado • Previsto x Realizado • gráfico do mês"])
+          el("div", { class:"panelSub" }, ["Somente mês selecionado • Previsto x Realizado • gráfico mensal"])
         ]),
         el("div", { class:"row" }, [
           btnSmall("+ Gasto", "btnGreen", () => popupAddTransaction("dashboard")),
@@ -1148,8 +1218,8 @@
     const expR = monthTotalExpenses(state.m, state.y);
     const saldoR = incR - expR;
 
-    const expP = monthExpectedExpenses();
     const incP = monthExpectedIncome(state.m, state.y);
+    const expP = monthExpectedExpenses(state.m, state.y);
     const saldoP = incP - expP;
 
     const body = el("div", { class:"panelBody" });
@@ -1188,49 +1258,38 @@
       ]),
     ]));
 
+    body.appendChild(el("div", { class:"divider" }));
+
     const chartBox = el("div", { class:"chartWrap" }, [
-      el("div", { class:"itemTitle" }, ["Gráfico do mês (selecionado)"]),
-      el("div", { class:"itemMeta" }, ["Barras = Realizado • Linha tracejada = Saldo Previsto (opcional)"]),
-      el("canvas", { id:"monthlyChart" }),
-      el("div", { class:"switchRow" }, [
-        el("div", { class:"switch" }, [
-          el("input", { type:"checkbox", id:"chkPlanned", checked: state.showPlannedOnChart ? "true" : null }),
-          el("label", { for:"chkPlanned", style:"cursor:pointer;" }, ["Mostrar previsto no gráfico"])
-        ]),
-        btnSmall("Planejar mês", "btnGhost", () => popupEditPlan()),
+      el("div", { class:"itemTitle" }, ["Gráfico mensal (mês selecionado)"]),
+      el("div", { class:"itemMeta" }, ["Barras lado a lado: Previsto x Realizado (Receitas, Despesas, Saldo)"]),
+      el("canvas", { id:"monthChart" }),
+      el("div", { class:"chartLegend" }, [
+        el("span", { class:"dot2 dot" }, []),
+        el("span", {}, ["Previsto"]),
+        el("span", { style:"width:10px;" }, [" "]),
+        el("span", { class:"dot" }, []),
+        el("span", {}, ["Realizado"]),
+        el("span", { style:"flex:1;" }, [" "]),
+        btnSmall("Planejar mês", "btnGhost", () => popupEditPlan())
       ])
     ]);
 
-    body.appendChild(el("div", { class:"divider" }));
     body.appendChild(chartBox);
 
     p.appendChild(body);
 
     setTimeout(() => {
-      const c = document.getElementById("monthlyChart");
-      if (c){
-        const pt = buildSeriesForSelectedMonth()[0];
-        drawMonthlyChart(c, pt, state.showPlannedOnChart);
-      }
-
-      const chk = document.getElementById("chkPlanned");
-      if (chk){
-        chk.checked = !!state.showPlannedOnChart;
-        chk.addEventListener("change", () => {
-          state.showPlannedOnChart = chk.checked;
-          const c2 = document.getElementById("monthlyChart");
-          if (c2){
-            const pt2 = buildSeriesForSelectedMonth()[0];
-            drawMonthlyChart(c2, pt2, state.showPlannedOnChart);
-          }
-        });
-      }
+      const c = document.getElementById("monthChart");
+      if (c) drawMonthChart(c,
+        {incomes:incR, expenses:expR, saldo:saldoR},
+        {incomes:incP, expenses:expP, saldo:saldoP}
+      );
     }, 0);
 
     return p;
   }
 
-  // ====== Demais telas (iguais da sua versão anterior) ======
   function renderGastos(){
     const p = el("div", { class:"panel" });
 
@@ -1293,51 +1352,29 @@
       el("div", { class:"panelHeader" }, [
         el("div", {}, [
           el("div", { class:"panelTitle" }, ["🧩 Fixas • ", monthYearStr(state.m, state.y)]),
-          el("div", { class:"panelSub" }, ["Modelos + fixas do mês (sem duplicar)"])
+          el("div", { class:"panelSub" }, ["Modelos (sem valor) + valores definidos manualmente no mês"])
         ]),
-        el("div", { class:"row" }, [ btnSmall("+ Fixa", "btnGreen", () => {
-          const wrap = el("div");
-          const form = el("div", { class:"form" });
-          const iName = el("input", { placeholder:"Nome (ex: Condomínio)" });
-          const iVal = el("input", { placeholder:"Valor (ex: 250,00)" });
-          form.appendChild(el("label", {}, ["Nome", iName]));
-          form.appendChild(el("label", {}, ["Valor", iVal]));
-          wrap.appendChild(form);
-
-          const bCancel = btnSmall("Cancelar", "btnGhost", () => closeModal());
-          const bSave = btnSmall("Adicionar", "btnGreen", () => {
-            const nm = normDesc(iName.value);
-            const v = numOr(iVal.value, NaN);
-            if (!nm || !Number.isFinite(v)){ toast("Preencha nome e valor."); return; }
-            data.fixed_templates.push({ name: nm, amount: Number(v) });
-            ensureFixedDueForMonth(state.m, state.y);
-            save();
-            closeModal();
-            toast("Despesa fixa adicionada.");
-            render();
-          });
-
-          openModal("Nova despesa fixa", wrap, [bCancel, bSave]);
-        }) ])
+        el("div", { class:"row" }, [ btnSmall("+ Fixa", "btnGreen", () => popupAddFixedTemplate()) ])
       ])
     );
 
     const body = el("div", { class:"panelBody" });
 
-    body.appendChild(el("div", { class:"itemTitle" }, ["Modelos de fixas (Previsto)"]));
+    body.appendChild(el("div", { class:"itemTitle" }, ["Modelos de fixas (sem valor fixo)"]));
     const templates = data.fixed_templates || [];
     const listT = el("div", { class:"list" });
 
     if (!templates.length){
       listT.appendChild(el("div", { class:"item" }, [el("div", { class:"muted" }, ["Sem fixas cadastradas."])]));
     }else{
-      templates.forEach((it) => {
+      templates.forEach((it, idx) => {
         const item = el("div", { class:"item" });
         item.appendChild(el("div", { class:"itemTop" }, [
           el("div", {}, [
             el("p", { class:"itemTitle" }, [safeText(it.name)]),
-            el("div", { class:"itemMeta mono" }, [`Previsto: ${brl(numOr(it.amount,0))}`])
-          ])
+            el("div", { class:"itemMeta" }, ["Sem valor fixo (defina o valor no mês)"])
+          ]),
+          el("div", { class:"row" }, [ btnSmall("Editar", "btnGhost", () => popupEditFixedTemplate(idx)) ])
         ]));
         listT.appendChild(item);
       });
@@ -1346,7 +1383,7 @@
     body.appendChild(listT);
 
     body.appendChild(el("div", { class:"divider" }));
-    body.appendChild(el("div", { class:"itemTitle" }, ["Fixas do mês (Realizado)"]));
+    body.appendChild(el("div", { class:"itemTitle" }, ["Fixas do mês (valor manual)"]));
 
     const fixedTxs = monthTransactions(state.m, state.y).filter(t => t.cat === "Despesas Fixas");
     const listM = el("div", { class:"list" });
@@ -1361,10 +1398,30 @@
         const item = el("div", { class:"item" });
         item.appendChild(el("div", { class:"itemTop" }, [
           el("div", {}, [
-            el("p", { class:"itemTitle mono" }, [`${t.date} • ${brl(t.valor)}`]),
-            el("div", { class:"itemMeta" }, [safeText(t.desc || "")])
+            el("p", { class:"itemTitle" }, [safeText(t.desc || "Fixa")]),
+            el("div", { class:"itemMeta mono" }, [`Valor do mês: ${brl(numOr(t.valor,0))} • Data: ${safeText(t.date)}`])
           ]),
           el("div", { class:"row" }, [
+            btnSmall("Definir valor", "btnGhost", () => {
+              const wrap = el("div");
+              const input = el("input", {
+                placeholder: "Valor do mês (ex: 380,00)",
+                value: (Number(t.valor || 0) > 0) ? String(t.valor).replace(".", ",") : ""
+              });
+              wrap.appendChild(el("label", {}, ["Valor", input]));
+
+              const bCancel = btnSmall("Cancelar", "btnGhost", () => closeModal());
+              const bSave = btnSmall("Salvar", "btnGreen", () => {
+                const v = numOr(input.value, NaN);
+                if (!Number.isFinite(v)){ toast("Valor inválido."); return; }
+                t.valor = Number(v);
+                save();
+                closeModal();
+                render();
+              });
+
+              openModal(`Valor • ${safeText(t.desc)}`, wrap, [bCancel, bSave]);
+            }),
             btnSmall(paidTxt, paid ? "btnDark" : "btnGhost", () => { t.paid = !paid; save(); render(); }),
             btnSmall("Excluir", "btnRed", () => {
               if (!confirm("Excluir esta fixa do mês?")) return;
@@ -1445,7 +1502,7 @@
       el("div", { class:"panelHeader" }, [
         el("div", {}, [
           el("div", { class:"panelTitle" }, ["💳 Cartões • ", monthYearStr(state.m, state.y)]),
-          el("div", { class:"panelSub" }, ["Editar limites/metas do mês • ver Previsto x Realizado"])
+          el("div", { class:"panelSub" }, ["Editar limites/metas do mês • Previsto x Realizado (sem fixas)"])
         ]),
         el("div", { class:"row" }, [
           btnSmall("+ Cartão", "btnGreen", () => popupAddCard()),
@@ -1481,8 +1538,11 @@
             btnSmall("+ Gasto", "btnGreen", () => popupAddTransaction("card_detail", cardName)),
           ])
         ]));
-        item.appendChild(el("div", { class:"progressWrap" }, [
-          el("div", { class:"progressBar", style:`width:${pct}%;` })
+        // bar simples
+        item.appendChild(el("div", { class:"itemMeta" }, [
+          el("div", { style:"margin-top:10px; background: rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.08); border-radius:999px; overflow:hidden; height:12px;" }, [
+            el("div", { style:`height:100%; width:${pct}%; background: linear-gradient(90deg, rgba(91,192,255,1), rgba(53,208,127,1));` })
+          ])
         ]));
         list.appendChild(item);
       });
@@ -1504,41 +1564,31 @@
     p.appendChild(
       el("div", { class:"panelHeader" }, [
         el("div", {}, [
-          el("div", { class:"panelTitle" }, [`💳 ${cardName} • ${monthYearStr(state.m, state.y)}`]),
+          el("div", { class:"panelTitle" }, [`💳 ${cardName} • `, monthYearStr(state.m, state.y)]),
           el("div", { class:"panelSub" }, [`Previsto (limite): ${brl(limit)} • Realizado: ${brl(spent)} • Restam: ${brl(rest)}`])
         ]),
         el("div", { class:"row" }, [
           btnSmall("◀ Voltar", "btnGhost", () => go("cartoes")),
           btnSmall("Editar limite", "btnGhost", () => popupEditCard(cardName)),
-          btnSmall("+ Gasto", "btnGreen", () => popupAddTransaction("card_detail", cardName)),
+          btnSmall("+ Gasto", "btnGreen", () => popupAddTransaction("card_detail", cardName))
         ])
       ])
     );
 
     const body = el("div", { class:"panelBody" });
 
-    body.appendChild(el("div", { class:"kpi" }, [
-      el("div", { class:"kpiCard" }, [
-        el("div", { class:"label" }, ["Previsto (limite)"]),
-        el("div", { class:"value mono" }, [brl(limit)])
-      ]),
-      el("div", { class:"kpiCard" }, [
-        el("div", { class:"label" }, ["Realizado"]),
-        el("div", { class:"value mono" }, [brl(spent)])
-      ]),
-      el("div", { class:"kpiCard" }, [
-        el("div", { class:"label" }, ["Restante"]),
-        el("div", { class:"value mono" }, [brl(rest)])
-      ]),
-    ]));
-
-    body.appendChild(el("div", { class:"progressWrap" }, [
-      el("div", { class:"progressBar", style:`width:${pct}%;` })
+    body.appendChild(el("div", { class:"item" }, [
+      el("div", { class:"itemTitle" }, ["Progresso do mês"]),
+      el("div", { class:"itemMeta mono" }, [`${brl(spent)} / ${brl(limit)} (${pct.toFixed(0)}%)`]),
+      el("div", { style:"margin-top:10px; background: rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.08); border-radius:999px; overflow:hidden; height:12px;" }, [
+        el("div", { style:`height:100%; width:${pct}%; background: linear-gradient(90deg, rgba(91,192,255,1), rgba(53,208,127,1));` })
+      ])
     ]));
 
     body.appendChild(el("div", { class:"divider" }));
 
     const txs = monthTransactionsForCard(cardName, state.m, state.y);
+
     if (!txs.length){
       body.appendChild(el("div", { class:"item" }, [el("div", { class:"muted" }, ["Sem compras nesse cartão no mês."])]));
       p.appendChild(body);
@@ -1549,18 +1599,21 @@
 
     txs.forEach((t) => {
       const paid = t.paid === true;
-      const paidTxt = paid ? "✅ Pago" : "⬜️ Pagar";
-
+      const tag = paid ? "✅" : "⬜️";
       const item = el("div", { class:"item" });
       item.appendChild(el("div", { class:"itemTop" }, [
         el("div", {}, [
-          el("p", { class:"itemTitle mono" }, [`${t.date} • ${t.cat} • ${brl(t.valor)}`]),
+          el("p", { class:"itemTitle mono" }, [`${tag} ${t.date} • ${t.cat} • ${brl(t.valor)}`]),
           el("div", { class:"itemMeta" }, [safeText(t.desc || "")])
         ]),
         el("div", { class:"row" }, [
-          btnSmall(paidTxt, paid ? "btnDark" : "btnGhost", () => { t.paid = !paid; save(); render(); }),
-          btnSmall("Excluir", "btnRed", () => {
-            if (!confirm("Excluir este gasto do cartão?")) return;
+          btnSmall(paid ? "Marcar Pagar" : "Marcar Pago", paid ? "btnRed" : "btnGreen", () => {
+            t.paid = !paid;
+            save();
+            render();
+          }),
+          btnSmall("Excluir", "btnGhost", () => {
+            if (!confirm("Excluir este gasto?")) return;
             const idx = data.transactions.indexOf(t);
             if (idx >= 0) data.transactions.splice(idx, 1);
             save();
@@ -1569,7 +1622,6 @@
           })
         ])
       ]));
-
       list.appendChild(item);
     });
 
@@ -1578,9 +1630,7 @@
     return p;
   }
 
-  // ====== Inicial ======
-  ensureFixedDueForMonth(state.m, state.y);
-  save();
+  // Initial
   setMonth(state.m, state.y);
   go("dashboard");
 })();
