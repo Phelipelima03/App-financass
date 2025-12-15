@@ -142,7 +142,7 @@
       z-index: 1000;
     }
     .modal{
-      width: min(640px, 100%);
+      width: min(680px, 100%);
       background: rgba(18,22,34,.95);
       border: 1px solid var(--line);
       border-radius: 18px;
@@ -248,7 +248,7 @@
 
 <script>
 (() => {
-  const STORAGE_KEY = "metacartao_data_v2_simple";
+  const STORAGE_KEY = "metacartao_data_v3_fixas_recorrentes";
   const NO_CARD = "Sem cartão";
 
   const DEFAULT_CARDS_LIMITS = {
@@ -269,36 +269,30 @@
       cards: { ...DEFAULT_CARDS_LIMITS },
       income_sources: [...DEFAULT_INCOME_SOURCES],
       incomes: [],
-      transactions: [] // {date, valor, cat, card, desc, installmentId?, installmentIndex?, installmentTotal?, installmentStart?, installmentPurchaseTotal?}
+      transactions: [], // (gastos normais e fixas "avulsas")
+      fixed_series: []  // ✅ FIXAS RECORRENTES: {id, desc, valor, day, startYM, endYM, skips[]}
     };
   }
 
   function safeText(x){ try { return String(x ?? ""); } catch { return ""; } }
 
-  // ✅ PARSER DE DINHEIRO (corrige 6.42 virar 642)
+  // ✅ PARSER DE DINHEIRO: aceita "6,42" e "6.42"
   function parseMoney(v){
     const raw = safeText(v).trim();
     if (!raw) return NaN;
-
-    // mantém só números, separadores e sinal
     let s = raw.replace(/\s+/g,"").replace(/[^\d.,-]/g,"");
 
-    // se tem vírgula e ponto: assume . milhares e , decimal
     if (s.includes(",") && s.includes(".")){
       s = s.replace(/\./g,"").replace(",",".");
     } else if (s.includes(",")){
-      // só vírgula: vírgula decimal
       s = s.replace(",",".");
     } else if (s.includes(".")){
-      // só ponto: ponto decimal (não remover!)
-      // se tiver mais de um ponto, mantém o último como decimal e remove os anteriores
       const parts = s.split(".");
       if (parts.length > 2){
         const last = parts.pop();
         s = parts.join("") + "." + last;
       }
     }
-
     const n = Number(s);
     return Number.isFinite(n) ? n : NaN;
   }
@@ -307,7 +301,6 @@
     const n = parseMoney(v);
     return Number.isFinite(n) ? n : fallback;
   }
-
   function pad2(n){ return String(n).padStart(2,"0"); }
   function brl(v){
     const vv = Number(v || 0);
@@ -351,10 +344,10 @@
   }
   function normDesc(s){ return safeText(s).trim().replace(/\s+/g, " "); }
 
+  // ======= Parcelas sincronizadas (cartões) =======
   function uidInstallment(){
     return "inst_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2,8);
   }
-
   function parseInstallments(text){
     const t = String(text || "").trim();
     if (!t || !t.includes("/")) return [null, null];
@@ -377,125 +370,6 @@
     const s = safeText(desc).trim();
     return s.replace(/\s*\(\s*\d+\s*\/\s*\d+\s*\)\s*$/,"").trim();
   }
-
-  function normalizeData(d){
-    if (!d || typeof d !== "object") d = {};
-    if (!d.cards || typeof d.cards !== "object" || Array.isArray(d.cards)) d.cards = {};
-    for (const [k,v] of Object.entries(DEFAULT_CARDS_LIMITS)){
-      if (!(k in d.cards)) d.cards[k] = v;
-      d.cards[k] = numOr(d.cards[k], v);
-    }
-
-    if (!Array.isArray(d.income_sources) || !d.income_sources.length) d.income_sources = [...DEFAULT_INCOME_SOURCES];
-
-    if (!Array.isArray(d.incomes)) d.incomes = [];
-    d.incomes = d.incomes
-      .map(it => {
-        if (!it || typeof it !== "object") return null;
-        const date = safeText(it.date || it.data || fmt_ddmmyyyy(today())).trim();
-        const valor = numOr(it.valor ?? it.amount, 0);
-        const source = normDesc(it.source || it.origem || it.nome || "Receita");
-        const desc = normDesc(it.desc || it.descricao || "");
-        return { date, valor, source, desc };
-      })
-      .filter(Boolean);
-
-    if (!Array.isArray(d.transactions)) d.transactions = [];
-    d.transactions = d.transactions
-      .map(t => {
-        if (!t || typeof t !== "object") return null;
-        const date = safeText(t.date || t.data || fmt_ddmmyyyy(today())).trim();
-        const valor = numOr(t.valor, 0);
-        const cat = normCategory(t.cat || t.categoria || "Outros");
-        const card = normDesc(t.card || t.cartao || "");
-        const desc = normDesc(t.desc || t.descricao || "");
-
-        const installmentId = t.installmentId ? normDesc(t.installmentId) : "";
-        const installmentIndex = Number.isFinite(Number(t.installmentIndex)) ? Number(t.installmentIndex) : null;
-        const installmentTotal = Number.isFinite(Number(t.installmentTotal)) ? Number(t.installmentTotal) : null;
-        const installmentStart = Number.isFinite(Number(t.installmentStart)) ? Number(t.installmentStart) : null;
-        const installmentPurchaseTotal = Number.isFinite(Number(t.installmentPurchaseTotal)) ? Number(t.installmentPurchaseTotal) : null;
-
-        const out = { date, valor, cat, card, desc };
-        if (installmentId) out.installmentId = installmentId;
-        if (installmentIndex != null) out.installmentIndex = installmentIndex;
-        if (installmentTotal != null) out.installmentTotal = installmentTotal;
-        if (installmentStart != null) out.installmentStart = installmentStart;
-        if (installmentPurchaseTotal != null) out.installmentPurchaseTotal = installmentPurchaseTotal;
-
-        return out;
-      })
-      .filter(Boolean);
-
-    return d;
-  }
-
-  function load(){
-    try{
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return normalizeData(seed());
-      return normalizeData(JSON.parse(raw));
-    }catch{
-      return normalizeData(seed());
-    }
-  }
-  function save(){
-    data = normalizeData(data);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-  }
-
-  // ====== Totais (mês selecionado) ======
-  function monthTotalExpenses(m, y){
-    return data.transactions.reduce((acc, t) => {
-      const d = parse_ddmmyyyy(t.date);
-      if (!d) return acc;
-      if (sameMonth(d, m, y)) acc += Number(t.valor || 0);
-      return acc;
-    }, 0);
-  }
-  function monthTotalIncomes(m, y){
-    return data.incomes.reduce((acc, it) => {
-      const d = parse_ddmmyyyy(it.date);
-      if (!d) return acc;
-      if (sameMonth(d, m, y)) acc += Number(it.valor || 0);
-      return acc;
-    }, 0);
-  }
-
-  // FIXAS NÃO entram em cartões
-  function monthTotalForCard(card, m, y){
-    return data.transactions.reduce((acc, t) => {
-      if (t.cat === "Despesas Fixas") return acc;
-      if (t.card !== card) return acc;
-      const d = parse_ddmmyyyy(t.date);
-      if (!d) return acc;
-      if (sameMonth(d, m, y)) acc += Number(t.valor || 0);
-      return acc;
-    }, 0);
-  }
-
-  function monthTransactions(m, y){
-    const txs = data.transactions.filter(t => {
-      const d = parse_ddmmyyyy(t.date);
-      if (!d) return false;
-      return sameMonth(d, m, y);
-    });
-    txs.reverse();
-    return txs;
-  }
-  function monthTransactionsForCard(card, m, y){
-    const txs = data.transactions.filter(t => {
-      if (t.cat === "Despesas Fixas") return false;
-      if (t.card !== card) return false;
-      const d = parse_ddmmyyyy(t.date);
-      if (!d) return false;
-      return sameMonth(d, m, y);
-    });
-    txs.reverse();
-    return txs;
-  }
-
-  // ====== Parcelas sincronizadas ======
   function isSyncedInstallment(t){
     return !!(t && t.installmentId && Number(t.installmentTotal) > 1);
   }
@@ -512,11 +386,7 @@
 
     const baseTx = group
       .slice()
-      .sort((a,b) => {
-        const da = parse_ddmmyyyy(a.date)?.getTime() ?? 0;
-        const db = parse_ddmmyyyy(b.date)?.getTime() ?? 0;
-        return da - db;
-      })[0] || tx;
+      .sort((a,b) => (parse_ddmmyyyy(a.date)?.getTime() ?? 0) - (parse_ddmmyyyy(b.date)?.getTime() ?? 0))[0] || tx;
 
     const baseDate = parse_ddmmyyyy(baseTx.date) || today();
     const purchaseTotal = Number.isFinite(Number(tx.installmentPurchaseTotal))
@@ -562,6 +432,248 @@
         installmentPurchaseTotal: Number(purchaseTotal)
       });
     }
+  }
+
+  // ======= Fixas Recorrentes =======
+  function ymIndex(m, y){ return (Number(y) * 12) + (Number(m) - 1); }
+  function ymToMY(ym){ const y = Math.floor(ym/12); const m = (ym % 12) + 1; return {m,y}; }
+  function lastDayOfMonth(y, m){ return new Date(Number(y), Number(m), 0).getDate(); } // m 1..12
+  function uidFixed(){
+    return "fix_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2,8);
+  }
+  function findFixedSeries(id){
+    return (data.fixed_series || []).find(s => s && s.id === id) || null;
+  }
+  function occursInMonth(series, ym){
+    if (!series) return false;
+    const s = Number(series.startYM);
+    const e = (series.endYM == null || series.endYM === "") ? null : Number(series.endYM);
+    if (!Number.isFinite(s)) return false;
+    if (ym < s) return false;
+    if (e != null && Number.isFinite(e) && ym > e) return false;
+    const skips = Array.isArray(series.skips) ? series.skips : [];
+    if (skips.includes(ym)) return false;
+    return true;
+  }
+  function fixedOccurrenceForMonth(series, m, y){
+    const ym = ymIndex(m,y);
+    if (!occursInMonth(series, ym)) return null;
+
+    const day = Math.max(1, Math.min(31, Number(series.day || 1)));
+    const ld = lastDayOfMonth(y, m);
+    const useDay = Math.min(day, ld);
+    const d = new Date(y, m-1, useDay);
+    d.setHours(0,0,0,0);
+
+    return {
+      __kind: "fixed_occ",
+      fixedId: series.id,
+      date: fmt_ddmmyyyy(d),
+      valor: Number(series.valor || 0),
+      cat: "Despesas Fixas",
+      card: NO_CARD,
+      desc: normDesc(series.desc || "Fixa")
+    };
+  }
+  function monthFixedOccurrences(m, y){
+    const ym = ymIndex(m,y);
+    const list = [];
+    for (const s of (data.fixed_series || [])){
+      if (!s || typeof s !== "object") continue;
+      if (!occursInMonth(s, ym)) continue;
+      const occ = fixedOccurrenceForMonth(s, m, y);
+      if (occ) list.push(occ);
+    }
+    return list;
+  }
+  function splitFixedSeriesApplyFromMonth(series, fromYM, newDesc, newValor, newDay){
+    const oldStart = Number(series.startYM);
+    const oldEnd = (series.endYM == null || series.endYM === "") ? null : Number(series.endYM);
+    const sSkips = Array.isArray(series.skips) ? series.skips.slice() : [];
+
+    // se já começa neste mês, só atualiza
+    if (fromYM <= oldStart){
+      series.desc = newDesc;
+      series.valor = Number(newValor);
+      series.day = Number(newDay);
+      return;
+    }
+
+    // fecha a série antiga até o mês anterior
+    series.endYM = fromYM - 1;
+
+    // separa skips: os futuros vão para a nova
+    const oldSkips = sSkips.filter(x => Number(x) <= series.endYM);
+    const newSkips = sSkips.filter(x => Number(x) >= fromYM);
+    series.skips = oldSkips;
+
+    // cria uma nova série a partir do mês selecionado
+    const newSeries = {
+      id: uidFixed(),
+      desc: newDesc,
+      valor: Number(newValor),
+      day: Number(newDay),
+      startYM: fromYM,
+      endYM: oldEnd,
+      skips: newSkips
+    };
+    data.fixed_series.push(newSeries);
+  }
+  function fixedSkipOneMonth(series, ym){
+    if (!Array.isArray(series.skips)) series.skips = [];
+    if (!series.skips.includes(ym)) series.skips.push(ym);
+  }
+  function fixedDeleteFromMonth(series, ym){
+    const s = Number(series.startYM);
+    if (!Number.isFinite(s)) return;
+
+    if (ym <= s){
+      // remove totalmente
+      data.fixed_series = (data.fixed_series || []).filter(x => x.id !== series.id);
+      return;
+    }
+    series.endYM = ym - 1;
+    if (Array.isArray(series.skips)){
+      series.skips = series.skips.filter(x => Number(x) <= series.endYM);
+    }
+  }
+
+  function normalizeData(d){
+    if (!d || typeof d !== "object") d = {};
+    if (!d.cards || typeof d.cards !== "object" || Array.isArray(d.cards)) d.cards = {};
+    for (const [k,v] of Object.entries(DEFAULT_CARDS_LIMITS)){
+      if (!(k in d.cards)) d.cards[k] = v;
+      d.cards[k] = numOr(d.cards[k], v);
+    }
+
+    if (!Array.isArray(d.income_sources) || !d.income_sources.length) d.income_sources = [...DEFAULT_INCOME_SOURCES];
+
+    if (!Array.isArray(d.incomes)) d.incomes = [];
+    d.incomes = d.incomes
+      .map(it => {
+        if (!it || typeof it !== "object") return null;
+        const date = safeText(it.date || it.data || fmt_ddmmyyyy(today())).trim();
+        const valor = numOr(it.valor ?? it.amount, 0);
+        const source = normDesc(it.source || it.origem || it.nome || "Receita");
+        const desc = normDesc(it.desc || it.descricao || "");
+        return { date, valor, source, desc };
+      })
+      .filter(Boolean);
+
+    if (!Array.isArray(d.transactions)) d.transactions = [];
+    d.transactions = d.transactions
+      .map(t => {
+        if (!t || typeof t !== "object") return null;
+        const date = safeText(t.date || t.data || fmt_ddmmyyyy(today())).trim();
+        const valor = numOr(t.valor, 0);
+        const cat = normCategory(t.cat || t.categoria || "Outros");
+        const card = normDesc(t.card || t.cartao || "");
+        const desc = normDesc(t.desc || t.descricao || "");
+
+        const installmentId = t.installmentId ? normDesc(t.installmentId) : "";
+        const installmentIndex = Number.isFinite(Number(t.installmentIndex)) ? Number(t.installmentIndex) : null;
+        const installmentTotal = Number.isFinite(Number(t.installmentTotal)) ? Number(t.installmentTotal) : null;
+        const installmentStart = Number.isFinite(Number(t.installmentStart)) ? Number(t.installmentStart) : null;
+        const installmentPurchaseTotal = Number.isFinite(Number(t.installmentPurchaseTotal)) ? Number(t.installmentPurchaseTotal) : null;
+
+        const out = { date, valor, cat, card, desc };
+        if (installmentId) out.installmentId = installmentId;
+        if (installmentIndex != null) out.installmentIndex = installmentIndex;
+        if (installmentTotal !=null) out.installmentTotal = installmentTotal;
+        if (installmentStart != null) out.installmentStart = installmentStart;
+        if (installmentPurchaseTotal != null) out.installmentPurchaseTotal = installmentPurchaseTotal;
+        return out;
+      })
+      .filter(Boolean);
+
+    // ✅ FIXAS RECORRENTES
+    if (!Array.isArray(d.fixed_series)) d.fixed_series = [];
+    d.fixed_series = d.fixed_series
+      .map(s => {
+        if (!s || typeof s !== "object") return null;
+        const id = normDesc(s.id || uidFixed());
+        const desc = normDesc(s.desc || s.descricao || "Fixa");
+        const valor = numOr(s.valor, 0);
+        const day = Math.max(1, Math.min(31, Number(s.day || s.dia || 1)));
+        const startYM = Number.isFinite(Number(s.startYM)) ? Number(s.startYM) : ymIndex((new Date()).getMonth()+1, (new Date()).getFullYear());
+        const endYM = (s.endYM == null || s.endYM === "") ? null : (Number.isFinite(Number(s.endYM)) ? Number(s.endYM) : null);
+        const skips = Array.isArray(s.skips) ? s.skips.map(x => Number(x)).filter(x => Number.isFinite(x)) : [];
+        const out = { id, desc, valor, day, startYM, endYM, skips };
+        return out;
+      })
+      .filter(Boolean);
+
+    return d;
+  }
+
+  function load(){
+    try{
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return normalizeData(seed());
+      return normalizeData(JSON.parse(raw));
+    }catch{
+      return normalizeData(seed());
+    }
+  }
+  function save(){
+    data = normalizeData(data);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  }
+
+  // ====== Totais (mês selecionado) ======
+  function monthTotalExpenses(m, y){
+    const fixedSum = monthFixedOccurrences(m,y).reduce((acc,t)=>acc+Number(t.valor||0),0);
+    const realSum = data.transactions.reduce((acc, t) => {
+      const d = parse_ddmmyyyy(t.date);
+      if (!d) return acc;
+      if (sameMonth(d, m, y)) acc += Number(t.valor || 0);
+      return acc;
+    }, 0);
+    return realSum + fixedSum;
+  }
+  function monthTotalIncomes(m, y){
+    return data.incomes.reduce((acc, it) => {
+      const d = parse_ddmmyyyy(it.date);
+      if (!d) return acc;
+      if (sameMonth(d, m, y)) acc += Number(it.valor || 0);
+      return acc;
+    }, 0);
+  }
+
+  // FIXAS NÃO entram em cartões
+  function monthTotalForCard(card, m, y){
+    return data.transactions.reduce((acc, t) => {
+      if (t.cat === "Despesas Fixas") return acc;
+      if (t.card !== card) return acc;
+      const d = parse_ddmmyyyy(t.date);
+      if (!d) return acc;
+      if (sameMonth(d, m, y)) acc += Number(t.valor || 0);
+      return acc;
+    }, 0);
+  }
+
+  function monthTransactions(m, y){
+    const real = data.transactions.filter(t => {
+      const d = parse_ddmmyyyy(t.date);
+      if (!d) return false;
+      return sameMonth(d, m, y);
+    });
+    const fixed = monthFixedOccurrences(m, y);
+
+    const all = real.concat(fixed);
+    all.sort((a,b) => (parse_ddmmyyyy(b.date)?.getTime() ?? 0) - (parse_ddmmyyyy(a.date)?.getTime() ?? 0));
+    return all;
+  }
+  function monthTransactionsForCard(card, m, y){
+    const txs = data.transactions.filter(t => {
+      if (t.cat === "Despesas Fixas") return false;
+      if (t.card !== card) return false;
+      const d = parse_ddmmyyyy(t.date);
+      if (!d) return false;
+      return sameMonth(d, m, y);
+    });
+    txs.sort((a,b) => (parse_ddmmyyyy(b.date)?.getTime() ?? 0) - (parse_ddmmyyyy(a.date)?.getTime() ?? 0));
+    return txs;
   }
 
   // ====== UI helpers ======
@@ -788,7 +900,16 @@
   }
 
   function popupEditTransaction(tx, goBackRoute=null, goBackPayload=null){
-    if (tx.cat === "Despesas Fixas") { popupEditFixed(tx); return; }
+    // se for fixa recorrente "virtual", edita a série
+    if (tx && tx.__kind === "fixed_occ" && tx.fixedId){
+      popupEditFixedSeries(tx.fixedId);
+      return;
+    }
+    // se for fixa avulsa (salva em transactions), usa editor de fixa avulsa
+    if (tx && tx.cat === "Despesas Fixas"){
+      popupEditFixedOneOff(tx);
+      return;
+    }
 
     const wrap = el("div");
     const form = el("div", { class:"form" });
@@ -863,16 +984,16 @@
         toast("Parcelas excluídas.");
         if (goBackRoute) go(goBackRoute, goBackPayload);
         else render();
-      }else{
-        if (!confirm("Excluir este gasto?")) return;
-        const idx = data.transactions.indexOf(tx);
-        if (idx >= 0) data.transactions.splice(idx, 1);
-        save();
-        closeModal();
-        toast("Gasto excluído.");
-        if (goBackRoute) go(goBackRoute, goBackPayload);
-        else render();
+        return;
       }
+      if (!confirm("Excluir este gasto?")) return;
+      const idx = data.transactions.indexOf(tx);
+      if (idx >= 0) data.transactions.splice(idx, 1);
+      save();
+      closeModal();
+      toast("Gasto excluído.");
+      if (goBackRoute) go(goBackRoute, goBackPayload);
+      else render();
     });
 
     const bSave = btnSmall("Salvar", "btnGreen", () => {
@@ -894,16 +1015,7 @@
         const newTot   = (tot != null) ? tot : meta.tot;
 
         try{
-          rebuildInstallmentGroup(
-            tx.installmentId,
-            d,
-            Number(total),
-            cat,
-            card,
-            desc,
-            newStart,
-            newTot
-          );
+          rebuildInstallmentGroup(tx.installmentId, d, Number(total), cat, card, desc, newStart, newTot);
         }catch{
           toast("Parcelas inválidas. Use ex: 1/10.");
           return;
@@ -1004,7 +1116,8 @@
     openModal("Nova receita", wrap, [bCancel, bSave]);
   }
 
-  function popupAddFixed(){
+  // ✅ FIXA RECORRENTE: adiciona e replica automaticamente para os meses seguintes
+  function popupAddFixedSeries(){
     const wrap = el("div");
     const form = el("div", { class:"form" });
 
@@ -1012,10 +1125,15 @@
     const iDesc = el("input", { placeholder:"Descrição (ex: Luz)" });
     const iVal  = el("input", { placeholder:"Valor (ex: 450,00)" });
 
-    form.appendChild(el("label", {}, ["Data", iDate]));
+    form.appendChild(el("label", {}, ["Data (dentro do mês selecionado)", iDate]));
     form.appendChild(el("label", {}, ["Descrição", iDesc]));
     form.appendChild(el("label", {}, ["Valor", iVal]));
     wrap.appendChild(form);
+
+    const hint = el("div", { class:"muted", style:"font-size:12px; font-weight:800; margin-top:10px;" }, [
+      "Esta despesa fixa será repetida automaticamente nos próximos meses. Você poderá editar/excluir e aplicar para os meses seguintes."
+    ]);
+    wrap.appendChild(hint);
 
     const bCancel = btnSmall("Cancelar", "btnGhost", () => closeModal());
     const bSave = btnSmall("Salvar", "btnGreen", () => {
@@ -1027,17 +1145,121 @@
       const v = numOr(iVal.value, NaN);
       if (!desc || !Number.isFinite(v)){ toast("Preencha descrição e valor."); return; }
 
-      data.transactions.push({ date: fmt_ddmmyyyy(d), valor: Number(v), cat: "Despesas Fixas", card: NO_CARD, desc });
+      const series = {
+        id: uidFixed(),
+        desc,
+        valor: Number(v),
+        day: d.getDate(),
+        startYM: ymIndex(state.m, state.y),
+        endYM: null,
+        skips: []
+      };
+      data.fixed_series.push(series);
+
       save();
       closeModal();
-      toast("Fixa adicionada.");
+      toast("Fixa recorrente adicionada.");
       render();
     });
 
-    openModal("Adicionar despesa fixa", wrap, [bCancel, bSave]);
+    openModal("Adicionar despesa fixa (recorrente)", wrap, [bCancel, bSave]);
   }
 
-  function popupEditFixed(tx){
+  function popupEditFixedSeries(fixedId){
+    const series = findFixedSeries(fixedId);
+    if (!series){ toast("Não achei essa fixa."); return; }
+
+    const ymNow = ymIndex(state.m, state.y);
+
+    const wrap = el("div");
+    const form = el("div", { class:"form" });
+
+    const day = Math.max(1, Math.min(31, Number(series.day || 1)));
+    const iDay = el("input", { value: String(day), placeholder:"Dia do mês (1-31)" });
+    const iDesc = el("input", { value: safeText(series.desc), placeholder:"Descrição" });
+    const iVal  = el("input", { value: String(Number(series.valor || 0)).replace(".", ","), placeholder:"Valor (ex: 450,00)" });
+
+    form.appendChild(el("label", {}, ["Dia do mês", iDay]));
+    form.appendChild(el("label", {}, ["Descrição", iDesc]));
+    form.appendChild(el("label", {}, ["Valor", iVal]));
+    wrap.appendChild(form);
+
+    const hint = el("div", { class:"muted", style:"font-size:12px; font-weight:800; margin-top:10px;" }, [
+      "Salvar pode aplicar só daqui pra frente (mês selecionado) ou desde o início dessa fixa."
+    ]);
+    wrap.appendChild(hint);
+
+    const bCancel = btnSmall("Cancelar", "btnGhost", () => closeModal());
+
+    const bDelete = btnSmall("Excluir", "btnRed", () => {
+      // modal de exclusão com opções
+      const w = el("div", {}, [
+        el("div", { class:"item", style:"margin-bottom:10px;" }, [
+          el("div", { class:"itemTitle" }, ["Excluir despesa fixa"]),
+          el("div", { class:"itemMeta" }, ["Escolha como deseja excluir:"])
+        ])
+      ]);
+
+      const bOnly = btnSmall("Só este mês", "btnGhost", () => {
+        fixedSkipOneMonth(series, ymNow);
+        save();
+        closeModal();
+        toast("Excluída só neste mês.");
+        render();
+      });
+      const bFrom = btnSmall("Este e próximos", "btnRed", () => {
+        fixedDeleteFromMonth(series, ymNow);
+        save();
+        closeModal();
+        toast("Excluída deste mês em diante.");
+        render();
+      });
+      const bBack = btnSmall("Cancelar", "btnGhost", () => { closeModal(); popupEditFixedSeries(fixedId); });
+
+      openModal("Excluir fixa", w, [bBack, bOnly, bFrom]);
+    });
+
+    const bSaveFrom = btnSmall("Salvar (deste mês)", "btnGreen", () => {
+      const desc = normDesc(iDesc.value || "");
+      const v = numOr(iVal.value, NaN);
+      const dayNew = Number(iDay.value);
+      if (!desc || !Number.isFinite(v) || !Number.isInteger(dayNew) || dayNew < 1 || dayNew > 31){
+        toast("Preencha descrição, valor e dia (1-31).");
+        return;
+      }
+
+      splitFixedSeriesApplyFromMonth(series, ymNow, desc, Number(v), dayNew);
+
+      save();
+      closeModal();
+      toast("Fixa atualizada (deste mês em diante).");
+      render();
+    });
+
+    const bSaveAll = btnSmall("Salvar (desde início)", "btnGhost", () => {
+      const desc = normDesc(iDesc.value || "");
+      const v = numOr(iVal.value, NaN);
+      const dayNew = Number(iDay.value);
+      if (!desc || !Number.isFinite(v) || !Number.isInteger(dayNew) || dayNew < 1 || dayNew > 31){
+        toast("Preencha descrição, valor e dia (1-31).");
+        return;
+      }
+
+      series.desc = desc;
+      series.valor = Number(v);
+      series.day = dayNew;
+
+      save();
+      closeModal();
+      toast("Fixa atualizada (toda a série).");
+      render();
+    });
+
+    openModal("Editar despesa fixa (recorrente)", wrap, [bCancel, bDelete, bSaveAll, bSaveFrom]);
+  }
+
+  // fixa avulsa (salva em transactions): continua editável/excluível só naquele mês
+  function popupEditFixedOneOff(tx){
     const wrap = el("div");
     const form = el("div", { class:"form" });
 
@@ -1052,7 +1274,7 @@
 
     const bCancel = btnSmall("Cancelar", "btnGhost", () => closeModal());
     const bDelete = btnSmall("Excluir", "btnRed", () => {
-      if (!confirm("Excluir esta despesa fixa?")) return;
+      if (!confirm("Excluir esta despesa fixa (apenas este mês)?")) return;
       const idx = data.transactions.indexOf(tx);
       if (idx >= 0) data.transactions.splice(idx, 1);
       save();
@@ -1075,19 +1297,13 @@
       tx.cat = "Despesas Fixas";
       tx.card = NO_CARD;
 
-      delete tx.installmentId;
-      delete tx.installmentIndex;
-      delete tx.installmentTotal;
-      delete tx.installmentStart;
-      delete tx.installmentPurchaseTotal;
-
       save();
       closeModal();
       toast("Atualizada.");
       render();
     });
 
-    openModal("Editar despesa fixa", wrap, [bCancel, bDelete, bSave]);
+    openModal("Editar despesa fixa (avulsa)", wrap, [bCancel, bDelete, bSave]);
   }
 
   function popupEditCard(cardName){
@@ -1289,18 +1505,23 @@
     txs.forEach((t) => {
       const cardShow = (t.cat === "Despesas Fixas" || t.card === NO_CARD || !t.card) ? "—" : t.card;
       const isSynced = isSyncedInstallment(t);
+      const isFixedRecurring = (t.__kind === "fixed_occ");
 
       const item = el("div", { class:"item" });
       item.appendChild(el("div", { class:"itemTop" }, [
         el("div", {}, [
           el("p", { class:"itemTitle mono" }, [
-            `${t.date} • ${t.cat} • ${cardShow} • ${brl(t.valor)}` + (isSynced ? " • Parcela" : "")
+            `${t.date} • ${t.cat} • ${cardShow} • ${brl(t.valor)}` + (isSynced ? " • Parcela" : "") + (isFixedRecurring ? " • Fixa" : "")
           ]),
           el("div", { class:"itemMeta" }, [safeText(t.desc || "")])
         ]),
         el("div", { class:"row" }, [
           btnSmall("Editar", "btnGhost", () => popupEditTransaction(t, "gastos")),
           btnSmall("Excluir", "btnRed", () => {
+            if (isFixedRecurring){
+              popupEditFixedSeries(t.fixedId); // no editor já tem excluir com opções
+              return;
+            }
             if (isSynced){
               if (!confirm("Excluir TODAS as parcelas deste gasto (inclui meses seguintes)?")) return;
               data.transactions = (data.transactions || []).filter(x => x.installmentId !== t.installmentId);
@@ -1333,10 +1554,10 @@
       el("div", { class:"panelHeader" }, [
         el("div", {}, [
           el("div", { class:"panelTitle" }, ["🧩 Fixas • ", monthYearStr(state.m, state.y)]),
-          el("div", { class:"panelSub" }, ["Adicione e edite as despesas fixas do mês"])
+          el("div", { class:"panelSub" }, ["Fixas recorrentes duplicam automaticamente para os próximos meses"])
         ]),
         el("div", { class:"row" }, [
-          btnSmall("+ Fixa", "btnGreen", () => popupAddFixed()),
+          btnSmall("+ Fixa", "btnGreen", () => popupAddFixedSeries()),
           btnSmall("+ Gasto", "btnGhost", () => popupAddTransaction("fixas"))
         ])
       ])
@@ -1344,36 +1565,70 @@
 
     const body = el("div", { class:"panelBody" });
 
-    const fixedTxs = monthTransactions(state.m, state.y).filter(t => t.cat === "Despesas Fixas");
+    // recorrentes (virtual)
+    const recurring = monthFixedOccurrences(state.m, state.y);
+    // avulsas (salvas em transactions)
+    const oneOff = (data.transactions || []).filter(t => {
+      const d = parse_ddmmyyyy(t.date);
+      return d && sameMonth(d, state.m, state.y) && t.cat === "Despesas Fixas";
+    }).sort((a,b) => (parse_ddmmyyyy(b.date)?.getTime() ?? 0) - (parse_ddmmyyyy(a.date)?.getTime() ?? 0));
+
     const list = el("div", { class:"list" });
 
-    if (!fixedTxs.length){
+    if (!recurring.length && !oneOff.length){
       list.appendChild(el("div", { class:"item" }, [
         el("div", { class:"itemTitle" }, ["Nenhuma despesa fixa neste mês."]),
-        el("div", { class:"itemMeta" }, ["Toque em “+ Fixa” para adicionar."])
+        el("div", { class:"itemMeta" }, ["Toque em “+ Fixa” para criar uma fixa recorrente."])
       ]));
     }else{
-      fixedTxs.forEach((t) => {
-        const item = el("div", { class:"item" });
-        item.appendChild(el("div", { class:"itemTop" }, [
-          el("div", {}, [
-            el("p", { class:"itemTitle" }, [safeText(t.desc || "Fixa")]),
-            el("div", { class:"itemMeta mono" }, [`${t.date} • ${brl(numOr(t.valor,0))}`])
-          ]),
-          el("div", { class:"row" }, [
-            btnSmall("Editar", "btnGhost", () => popupEditFixed(t)),
-            btnSmall("Excluir", "btnRed", () => {
-              if (!confirm("Excluir esta despesa fixa?")) return;
-              const idx = data.transactions.indexOf(t);
-              if (idx >= 0) data.transactions.splice(idx, 1);
-              save();
-              toast("Excluída.");
-              render();
-            })
-          ])
+      if (recurring.length){
+        list.appendChild(el("div", { class:"item" }, [
+          el("div", { class:"itemTitle" }, ["Fixas recorrentes"]),
+          el("div", { class:"itemMeta" }, ["Editar/excluir pode aplicar para os meses seguintes."])
         ]));
-        list.appendChild(item);
-      });
+        recurring.forEach((t) => {
+          const item = el("div", { class:"item" });
+          item.appendChild(el("div", { class:"itemTop" }, [
+            el("div", {}, [
+              el("p", { class:"itemTitle" }, [safeText(t.desc || "Fixa")]),
+              el("div", { class:"itemMeta mono" }, [`${t.date} • ${brl(numOr(t.valor,0))}`])
+            ]),
+            el("div", { class:"row" }, [
+              btnSmall("Editar", "btnGhost", () => popupEditFixedSeries(t.fixedId)),
+              btnSmall("Excluir", "btnRed", () => popupEditFixedSeries(t.fixedId))
+            ])
+          ]));
+          list.appendChild(item);
+        });
+      }
+
+      if (oneOff.length){
+        list.appendChild(el("div", { class:"item" }, [
+          el("div", { class:"itemTitle" }, ["Fixas avulsas (só este mês)"]),
+          el("div", { class:"itemMeta" }, ["Essas não duplicam automaticamente."])
+        ]));
+        oneOff.forEach((t) => {
+          const item = el("div", { class:"item" });
+          item.appendChild(el("div", { class:"itemTop" }, [
+            el("div", {}, [
+              el("p", { class:"itemTitle" }, [safeText(t.desc || "Fixa")]),
+              el("div", { class:"itemMeta mono" }, [`${t.date} • ${brl(numOr(t.valor,0))}`])
+            ]),
+            el("div", { class:"row" }, [
+              btnSmall("Editar", "btnGhost", () => popupEditFixedOneOff(t)),
+              btnSmall("Excluir", "btnRed", () => {
+                if (!confirm("Excluir esta despesa fixa (apenas este mês)?")) return;
+                const idx = data.transactions.indexOf(t);
+                if (idx >= 0) data.transactions.splice(idx, 1);
+                save();
+                toast("Excluída.");
+                render();
+              })
+            ])
+          ]));
+          list.appendChild(item);
+        });
+      }
     }
 
     body.appendChild(list);
